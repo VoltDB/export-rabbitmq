@@ -1,0 +1,233 @@
+<?xml version="1.0" ?>
+<project default="default" name="VoltDB-export-RabbitMQ">
+
+<!-- GENERAL HELPER MACROS -->
+<macrodef name="envdefault">
+    <attribute name="prop" />
+    <attribute name="var" />
+    <attribute name="default" />
+    <sequential>
+        <condition property="@{prop}" value="${env.@{var}}" else="@{default}">
+            <isset property="env.@{var}" />
+        </condition>
+    </sequential>
+</macrodef>
+
+<macrodef name="invoke-javac17">
+    <attribute name="srcdir"/>
+    <attribute name="destdir" default="${build.dir}"/>
+    <attribute name="excludes" default=""/>
+    <attribute name="includes" default=""/>
+    <sequential>
+        <javac
+            target="1.7"
+            source="1.7"
+            srcdir="@{srcdir}"
+            destdir="@{destdir}"
+            excludes="@{excludes}"
+            includes="@{includes}"
+            encoding='UTF-8'
+            debug='true'
+            includeAntRuntime='false'>
+            <classpath refid="project.classpath" />
+        </javac>
+    </sequential>
+</macrodef>
+
+<tstamp/>
+
+<!-- make environment var foo available as env.foo -->
+<property environment="env"/>
+
+<!-- allow env.VOLTBUILD to override "build" property -->
+<envdefault prop="dist.dir" var="VOLTDIST" default="../voltdb" />
+
+<property name='base.dir'                    location='.' />
+<property name='build.dir'                   location='obj' />
+<property name='build.test.dir'              location='${build.dir}/test' />
+<property name='build.testoutput.dir'        location='${build.dir}/testoutput' />
+<property name='src.dir'                     location='src/main/java' />
+<property name='test.dir'                    location='src/test/java' />
+<property name='lib.dir'                     location='${dist.dir}/lib' />
+<property name='voltdb.dir'                  location='${dist.dir}/voltdb' />
+<property name='dist.extension.dir'          location='${dist.dir}/lib/extension' />
+<property name='voltcore.thirdparty.dir'     location='${dist.dir}/third_party/java/jars' />
+<property name='voltcore.tools'              location='${dist.dir}/tools' />
+<property name='depcache'                    value='.depcache' />
+
+<property name="j2se_api" value="http://docs.oracle.com/javase/7/docs/api/"/>
+
+<path id='project.classpath'>
+    <pathelement location='${build.dir}' />
+    <pathelement location='${build.test.dir}' />
+    <fileset dir='${lib.dir}'>
+        <include name='*.jar' />
+    </fileset>
+    <fileset dir='${dist.extension.dir}'>
+        <include name='*.jar' />
+    </fileset>
+    <fileset dir='${voltcore.thirdparty.dir}'>
+        <include name='*.jar' />
+    </fileset>
+    <fileset dir='${voltdb.dir}'>
+        <include name='voltdb-*.jar' />
+    </fileset>
+    <pathelement path="${java.class.path}"/>
+</path>
+
+<!-- common macro to run a bynch of junit -->
+<macrodef name="run_junit">
+    <attribute name="timeout"/>
+    <attribute name="printsummary" default="off" />
+    <attribute name="showoutput" default="false" />
+    <element name="tests"/>
+    <element name="formatters"/>
+    <sequential>
+        <mkdir dir="${build.testoutput.dir}" />
+        <junit
+            dir="/tmp"
+            fork="yes"
+            haltonfailure="no"
+            failureproperty="junit.failures"
+            printsummary="@{printsummary}"
+            timeout="@{timeout}"
+            maxmemory="1024M"
+            showoutput="@{showoutput}"
+        >
+            <classpath refid="project.classpath" />
+            <jvmarg value="-Xmx2048m"/>
+            <jvmarg value="-XX:+HeapDumpOnOutOfMemoryError"/>
+            <formatters/>
+            <batchtest todir="${build.testoutput.dir}">
+                <tests/>
+            </batchtest>
+            <assertions><enable/></assertions>
+        </junit>
+    </sequential>
+</macrodef>
+
+<!--
+***************************************
+PRIMARY ENTRY POINTS
+***************************************
+-->
+
+<target name="default"
+    depends="install"
+    description="Compile, build, and install the RabbitMQ export connector Jarfile."
+/>
+
+<!--
+***************************************
+CLEANING
+***************************************
+-->
+
+<target name='clean' description="Remove all RabbitMQ export connector artifacts.">
+  <exec dir='.' executable='/bin/sh'>
+    <arg line="-c 'rm -rf ${build.dir}'"/>
+  </exec>
+  <exec dir='.' executable='/bin/sh'>
+    <arg line="-c 'rm -rf voltdb-rabbitmq.jar'"/>
+  </exec>
+  <exec dir='.' executable='/bin/sh'>
+    <arg line="-c 'rm -rf ${dist.extension.dir}/voltdb-rabbitmq.jar'"/>
+  </exec>
+</target>
+
+<target name='install' depends="voltdb-rabbitmq.jar"
+        description="Install the Jar file into VoltDB's lib/extension">
+  <copy todir="${dist.extension.dir}" file="voltdb-rabbitmq.jar"/>
+</target>
+
+<!--
+***************************************
+JAR BUILDING
+***************************************
+-->
+
+<target name="voltdb-rabbitmq.jar" depends="compile">
+    <jar destfile="voltdb-rabbitmq.jar">
+        <fileset dir="${build.dir}" defaultexcludes="yes" >
+            <include name="**" />
+        </fileset>
+        <manifest>
+            <section name="Credits">
+                <attribute name="Author" value="VoltDB Inc." />
+            </section>
+            <section name="Shared">
+                <attribute
+                    name="Title"
+                    value="VoltDB RabbitMQ export connector"
+                />
+                <attribute name="Date" value="${TODAY}" />
+            </section>
+        </manifest>
+    </jar>
+</target>
+
+<!--
+***************************************
+JAVA COMPILATION
+***************************************
+-->
+
+<target name="compile" description="Compile all Java source">
+    <mkdir dir='${build.dir}' />
+
+    <invoke-javac17
+        srcdir="${src.dir}"
+        includes="org/voltdb/exportclient/RabbitMQExportClient.java"/>
+</target>
+
+<target name="compile.tests" description="Compile all Java tests">
+    <mkdir dir='${build.test.dir}' />
+
+    <invoke-javac17
+        srcdir="${test.dir}"
+        destdir="${build.test.dir}"
+        includes="org/voltdb/exportclient/Test*.java"/>
+</target>
+
+<!--
+***************************************
+TEST
+***************************************
+-->
+<target name="junit" depends="compile, compile.tests">
+    <mkdir dir="${build.testoutput.dir}" />
+    <run_junit timeout="900000" printsummary="yes">
+        <formatters>
+            <formatter type="xml" />
+        </formatters>
+        <tests>
+            <fileset dir="${build.test.dir}">
+                <include name="org/voltdb/exportclient/**/Test*.class"/>
+            </fileset>
+        </tests>
+    </run_junit>
+
+    <mkdir dir="${build.testoutput.dir}/report"/>
+    <junitreport todir="${build.testoutput.dir}">
+        <fileset dir="${build.testoutput.dir}">
+            <include name="TEST-*.xml" />
+        </fileset>
+        <report format="noframes" todir="${build.testoutput.dir}/report"/>
+        <report
+            styledir="${voltcore.tools}"
+            format="noframes"
+            todir="${build.testoutput.dir}"
+        />
+    </junitreport>
+
+    <!-- Fail the build if there were any problems.
+        This runs all the tests before failing. -->
+    <fail
+        if="junit.failures"
+        unless="emma.enabled"
+        message="JUnit had failures"
+    />
+</target>
+
+<!-- END PROJECT -->
+</project>
