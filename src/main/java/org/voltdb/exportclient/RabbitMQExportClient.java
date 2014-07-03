@@ -80,7 +80,7 @@ public class RabbitMQExportClient extends ExportClientBase {
         m_brokerPort = Integer.parseInt(config.getProperty("broker.port",
                 String.valueOf(ConnectionFactory.DEFAULT_AMQP_PORT)));
         m_exchangeName = config.getProperty("exchange.name", "");
-        m_routingKey =  config.getProperty("routing.key");
+        m_routingKey = config.getProperty("routing.key");
         m_skipInternal = Boolean.parseBoolean(config.getProperty("skipinternals", "false"));
 
         if (Boolean.parseBoolean(config.getProperty("queue.durable", "true"))) {
@@ -199,8 +199,8 @@ public class RabbitMQExportClient extends ExportClientBase {
             StringWriter stringer = new StringWriter();
             CSVWriter csv = new CSVWriter(stringer);
             try {
-                final Object[] row = decodeRow(rowData);
-                if (!writeRow(row, csv, m_skipInternal, m_binaryEncoding, m_ODBCDateformat.get())) {
+                final ExportRowData row = decodeRow(rowData);
+                if (!writeRow(row.values, csv, m_skipInternal, m_binaryEncoding, m_ODBCDateformat.get())) {
                     return false;
                 }
                 csv.flush();

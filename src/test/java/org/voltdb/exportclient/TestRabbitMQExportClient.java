@@ -85,7 +85,7 @@ public class TestRabbitMQExportClient {
         ArrayList<Integer> lens = Lists.newArrayList(8, 8);
         final RabbitMQExportClient.RabbitExportDecoder decoder =
                 (RabbitMQExportClient.RabbitExportDecoder) dut.constructExportDecoder(
-                        new AdvertisedDataSource(1, "TableSig", "TableName",
+                        new AdvertisedDataSource(1, "TableSig", "TableName", "col1",
                                 System.currentTimeMillis(), 0, colNames, colTypes, lens));
         assertEquals("TableName_1", decoder.m_effectiveRoutingKey);
     }
