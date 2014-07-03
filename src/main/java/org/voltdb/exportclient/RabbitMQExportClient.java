@@ -54,14 +54,12 @@ public class RabbitMQExportClient extends ExportClientBase {
     private static final RateLimitedLogger errlogger = new RateLimitedLogger(10 * 1000, slogger, Level.ERROR);
 
     // The following variables are all RabbitMQ config options.
-    // RabbitMQ server hostname/IP.
-    String m_brokerHost;
-    // RabbitMQ server port number.
-    int m_brokerPort;
     // RabbitMQ exchange name.
     String m_exchangeName;
     // The routing key to use for each message.
     String m_routingKey;
+    // Factory to create RabbitMQ connections
+    ConnectionFactory m_connFactory;
 
     boolean m_skipInternal;
     ExportDecoderBase.BinaryEncoding m_binaryEncoding;
@@ -72,13 +70,15 @@ public class RabbitMQExportClient extends ExportClientBase {
 
     @Override
     public void configure(Properties config) throws Exception {
-        m_brokerHost = config.getProperty("broker.host");
-        if (m_brokerHost == null) {
+        final String brokerHost = config.getProperty("broker.host");
+        if (brokerHost == null) {
             throw new IllegalArgumentException("\"broker.host\" must not be null");
         }
 
-        m_brokerPort = Integer.parseInt(config.getProperty("broker.port",
+        final int brokerPort = Integer.parseInt(config.getProperty("broker.port",
                 String.valueOf(ConnectionFactory.DEFAULT_AMQP_PORT)));
+        final String username = config.getProperty("username", ConnectionFactory.DEFAULT_USER);
+        final String password = config.getProperty("password", ConnectionFactory.DEFAULT_PASS);
         m_exchangeName = config.getProperty("exchange.name", "");
         m_routingKey = config.getProperty("routing.key");
         m_skipInternal = Boolean.parseBoolean(config.getProperty("skipinternals", "false"));
@@ -86,6 +86,12 @@ public class RabbitMQExportClient extends ExportClientBase {
         if (Boolean.parseBoolean(config.getProperty("queue.durable", "true"))) {
             m_channelProperties = MessageProperties.PERSISTENT_TEXT_PLAIN;
         }
+
+        m_connFactory = new ConnectionFactory();
+        m_connFactory.setHost(brokerHost);
+        m_connFactory.setPort(brokerPort);
+        m_connFactory.setUsername(username);
+        m_connFactory.setPassword(password);
 
         final TimeZone tz = TimeZone.getTimeZone(config.getProperty("timezone", VoltDB.GMT_TIMEZONE.getID()));
 
@@ -111,10 +117,11 @@ public class RabbitMQExportClient extends ExportClientBase {
 
     class RabbitExportDecoder extends ExportDecoderBase {
         final String m_effectiveRoutingKey;
-
-        private ConnectionFactory m_connFactory;
+        // Cached RabbitMQ connection
         private Connection m_connection;
+        // Cached RabbitMQ channel
         private Channel m_channel;
+
         private final ListeningExecutorService m_es;
 
         RabbitExportDecoder(AdvertisedDataSource source) {
@@ -125,10 +132,6 @@ public class RabbitMQExportClient extends ExportClientBase {
             } else {
                 m_effectiveRoutingKey = m_routingKey;
             }
-
-            m_connFactory = new ConnectionFactory();
-            m_connFactory.setHost(m_brokerHost);
-            m_connFactory.setPort(m_brokerPort);
 
             m_es = CoreUtils.getListeningSingleThreadExecutor(
                     "RabbitMQ Export decoder for partition " + source.partitionId
@@ -143,7 +146,7 @@ public class RabbitMQExportClient extends ExportClientBase {
 
             if (slogger.isDebugEnabled()) {
                 slogger.debug(String.format("Connecting to RabbitMQ server %s on port %d",
-                        m_brokerHost, m_brokerPort));
+                        m_connFactory.getHost(), m_connFactory.getPort()));
             }
 
             m_connection = m_connFactory.newConnection();
@@ -232,7 +235,7 @@ public class RabbitMQExportClient extends ExportClientBase {
             } catch (Exception e) {
                 slogger.error("Failed to wait for confirmation in RabbitMQ export client.", e);
                 close();
-                throw new RestartBlockException(false);
+                throw new RestartBlockException(true);
             }
         }
 

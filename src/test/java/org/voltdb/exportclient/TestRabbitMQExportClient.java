@@ -60,10 +60,12 @@ public class TestRabbitMQExportClient {
     {
         final RabbitMQExportClient dut = new RabbitMQExportClient();
         final Properties config = new Properties();
-        config.setProperty("broker.host", "localhost");
+        config.setProperty("broker.host", "fakehost");
         dut.configure(config);
-        assertEquals("localhost", dut.m_brokerHost);
-        assertEquals(ConnectionFactory.DEFAULT_AMQP_PORT, dut.m_brokerPort);
+        assertEquals("fakehost", dut.m_connFactory.getHost());
+        assertEquals(ConnectionFactory.DEFAULT_AMQP_PORT, dut.m_connFactory.getPort());
+        assertEquals(ConnectionFactory.DEFAULT_USER, dut.m_connFactory.getUsername());
+        assertEquals(ConnectionFactory.DEFAULT_PASS, dut.m_connFactory.getPassword());
         assertEquals("", dut.m_exchangeName);
         assertEquals(null, dut.m_routingKey);
         assertFalse(dut.m_skipInternal);
