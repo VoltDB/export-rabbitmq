@@ -26,7 +26,10 @@ package org.voltdb.exportclient;
 import java.io.IOException;
 import java.io.StringWriter;
 import java.text.SimpleDateFormat;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Properties;
+import java.util.StringTokenizer;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
@@ -56,8 +59,8 @@ public class RabbitMQExportClient extends ExportClientBase {
     // The following variables are all RabbitMQ config options.
     // RabbitMQ exchange name.
     String m_exchangeName;
-    // The routing key to use for each message.
-    String m_routingKey;
+    // The routing key suffix column to use for each message.
+    Map<String, String> m_routingKeyColumns = new HashMap<String, String>();
     // Factory to create RabbitMQ connections
     ConnectionFactory m_connFactory;
 
@@ -80,7 +83,18 @@ public class RabbitMQExportClient extends ExportClientBase {
         final String username = config.getProperty("username", ConnectionFactory.DEFAULT_USER);
         final String password = config.getProperty("password", ConnectionFactory.DEFAULT_PASS);
         m_exchangeName = config.getProperty("exchange.name", "");
-        m_routingKey = config.getProperty("routing.key");
+
+        final String routingKeySuffix = config.getProperty("routing.key.suffix");
+        if (routingKeySuffix != null) {
+            StringTokenizer tokens = new StringTokenizer(routingKeySuffix, ",");
+            while (tokens.hasMoreTokens()) {
+                String[] parts = tokens.nextToken().split("\\.");
+                if (parts.length == 2) {
+                    m_routingKeyColumns.put(parts[0].toLowerCase().trim(), parts[1].trim());
+                }
+            }
+        }
+
         m_skipInternal = Boolean.parseBoolean(config.getProperty("skipinternals", "false"));
 
         if (Boolean.parseBoolean(config.getProperty("queue.durable", "true"))) {
@@ -112,11 +126,16 @@ public class RabbitMQExportClient extends ExportClientBase {
 
     @Override
     public ExportDecoderBase constructExportDecoder(AdvertisedDataSource source) {
+        // Get the routing key column name for this table
+        String partCol = m_routingKeyColumns.get(source.tableName.toLowerCase());
+        if (partCol != null) {
+            //This is for setting column other than partition column of table.
+            source.setPartitionColumnName(partCol);
+        }
         return new RabbitExportDecoder(source);
     }
 
     class RabbitExportDecoder extends ExportDecoderBase {
-        final String m_effectiveRoutingKey;
         // Cached RabbitMQ connection
         private Connection m_connection;
         // Cached RabbitMQ channel
@@ -127,11 +146,6 @@ public class RabbitMQExportClient extends ExportClientBase {
         RabbitExportDecoder(AdvertisedDataSource source) {
             super(source);
             slogger.info("Creating Rabbit export decoder for " + source.toString());
-            if (m_routingKey == null) {
-                m_effectiveRoutingKey = m_source.tableName + "_" + m_source.partitionId;
-            } else {
-                m_effectiveRoutingKey = m_routingKey;
-            }
 
             m_es = CoreUtils.getListeningSingleThreadExecutor(
                     "RabbitMQ Export decoder for partition " + source.partitionId
@@ -196,6 +210,17 @@ public class RabbitMQExportClient extends ExportClientBase {
             }
         }
 
+        String getEffectiveRoutingKey(ExportRowData row)
+        {
+            final String effectiveRoutingKey;
+            if (row.partitionValue == null) {
+                effectiveRoutingKey = m_source.tableName;
+            } else {
+                effectiveRoutingKey = m_source.tableName + "." + row.partitionValue.toString();
+            }
+            return effectiveRoutingKey;
+        }
+
         @Override
         public boolean processRow(int rowSize, byte[] rowData)
                 throws RestartBlockException {
@@ -209,13 +234,14 @@ public class RabbitMQExportClient extends ExportClientBase {
                 csv.flush();
 
                 String message = stringer.toString();
+                final String effectiveRoutingKey = getEffectiveRoutingKey(row);
 
                 if (slogger.isTraceEnabled()) {
                     slogger.trace(String.format("Publishing to exchange %s using routing key %s",
-                            m_exchangeName, m_effectiveRoutingKey));
+                            m_exchangeName, effectiveRoutingKey));
                 }
 
-                getChannel().basicPublish(m_exchangeName, m_effectiveRoutingKey, m_channelProperties, message.getBytes());
+                getChannel().basicPublish(m_exchangeName, effectiveRoutingKey, m_channelProperties, message.getBytes());
             } catch(Exception e) {
                 errlogger.log("Failed to send row to RabbitMQ server: " + Throwables.getStackTraceAsString(e),
                         System.currentTimeMillis());

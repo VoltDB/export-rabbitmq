@@ -26,18 +26,74 @@ package org.voltdb.exportclient;
 import com.google_voltpatches.common.collect.Lists;
 import com.rabbitmq.client.ConnectionFactory;
 import com.rabbitmq.client.MessageProperties;
+import org.junit.Before;
 import org.junit.Test;
 import org.voltdb.VoltDB;
+import org.voltdb.VoltTable;
 import org.voltdb.VoltType;
 import org.voltdb.export.AdvertisedDataSource;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Properties;
 import java.util.TimeZone;
 
 import static org.junit.Assert.*;
 
 public class TestRabbitMQExportClient {
+    static final String[] COLUMN_NAMES = {"tid", "ts", "sq", "pid", "site", "op",
+            "tinyint", "smallint", "integer", "bigint", "float", "timestamp", "string", "decimal"};
+
+    static final VoltType[] COLUMN_TYPES
+            = {VoltType.BIGINT, VoltType.BIGINT, VoltType.BIGINT, VoltType.BIGINT, VoltType.BIGINT, VoltType.BIGINT,
+            VoltType.TINYINT, VoltType.SMALLINT, VoltType.INTEGER,
+            VoltType.BIGINT, VoltType.FLOAT, VoltType.TIMESTAMP,VoltType.STRING, VoltType.DECIMAL};
+
+    static final Integer COLUMN_LENGTHS[] = {
+            0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 64, 0
+    };
+
+    static VoltTable vtable = new VoltTable(
+            new VoltTable.ColumnInfo("VOLT_TRANSACTION_ID", VoltType.BIGINT),
+            new VoltTable.ColumnInfo("VOLT_EXPORT_TIMESTAMP", VoltType.BIGINT),
+            new VoltTable.ColumnInfo("VOLT_EXPORT_SEQUENCE_NUMBER", VoltType.BIGINT),
+            new VoltTable.ColumnInfo("VOLT_PARTITION_ID", VoltType.BIGINT),
+            new VoltTable.ColumnInfo("VOLT_TRANSACTION_ID", VoltType.BIGINT),
+            new VoltTable.ColumnInfo("VOLT_SITE_ID", VoltType.BIGINT),
+            new VoltTable.ColumnInfo("tinyint", VoltType.TINYINT),
+            new VoltTable.ColumnInfo("smallint", VoltType.SMALLINT),
+            new VoltTable.ColumnInfo("integer", VoltType.INTEGER),
+            new VoltTable.ColumnInfo("bigint", VoltType.BIGINT),
+            new VoltTable.ColumnInfo("float", VoltType.FLOAT),
+            new VoltTable.ColumnInfo("timestamp", VoltType.TIMESTAMP),
+            new VoltTable.ColumnInfo("string", VoltType.STRING),
+            new VoltTable.ColumnInfo("decimal", VoltType.DECIMAL)
+    );
+
+    static AdvertisedDataSource constructTestSource(boolean replicated, int partition)
+    {
+        ArrayList<String> col_names = new ArrayList<String>();
+        ArrayList<VoltType> col_types = new ArrayList<VoltType>();
+        for (int i = 0; i < COLUMN_TYPES.length; i++)
+        {
+            col_names.add(COLUMN_NAMES[i]);
+            col_types.add(COLUMN_TYPES[i]);
+        }
+        String partCol = replicated ? null : "smallint";
+        //clear the table
+        vtable.clearRowData();
+        AdvertisedDataSource source = new AdvertisedDataSource(partition, "foo", "yankeelover",
+                partCol, 0, 32, col_names, col_types, Arrays.asList(COLUMN_LENGTHS));
+        return source;
+    }
+
+    @Before
+    public void setup()
+    {
+        vtable.clearRowData();
+    }
+
     @Test
     public void testConfigValidation() throws Exception
     {
@@ -67,7 +123,7 @@ public class TestRabbitMQExportClient {
         assertEquals(ConnectionFactory.DEFAULT_USER, dut.m_connFactory.getUsername());
         assertEquals(ConnectionFactory.DEFAULT_PASS, dut.m_connFactory.getPassword());
         assertEquals("", dut.m_exchangeName);
-        assertEquals(null, dut.m_routingKey);
+        assertTrue(dut.m_routingKeyColumns.isEmpty());
         assertFalse(dut.m_skipInternal);
         assertEquals(MessageProperties.PERSISTENT_TEXT_PLAIN, dut.m_channelProperties);
         assertEquals(ExportDecoderBase.BinaryEncoding.HEX, dut.m_binaryEncoding);
@@ -75,20 +131,70 @@ public class TestRabbitMQExportClient {
     }
 
     @Test
-    public void testEffectiveRoutingKey() throws Exception
+    public void testRoutingKeySuffixParsing() throws Exception
+    {
+        final RabbitMQExportClient dut = new RabbitMQExportClient();
+        final Properties config = new Properties();
+        config.setProperty("broker.host", "fakehost");
+        config.setProperty("routing.key.suffix", "table1.col1,table2.col2,table3.col3, table4.col4,");
+        dut.configure(config);
+        assertEquals("col1", dut.m_routingKeyColumns.get("table1"));
+        assertEquals("col2", dut.m_routingKeyColumns.get("table2"));
+        assertEquals("col3", dut.m_routingKeyColumns.get("table3"));
+        assertEquals("col4", dut.m_routingKeyColumns.get("table4"));
+    }
+
+    @Test
+    public void testPartitionColumnEffectiveRoutingKey() throws Exception
+    {
+        // Use partitioning column
+        verifyRoutingKey(/* replicated */ false,
+                         /* colName */ null,
+                         /* expectedRoutingKey */ "yankeelover.2");
+        // Use non-partitioning column
+        verifyRoutingKey(/* replicated */ false,
+                         /* colName */ "yankeelover.bigint",
+                         /* expectedRoutingKey */ "yankeelover.4");
+
+        // Replicated table, no routing suffix by default
+        verifyRoutingKey(/* replicated */ true,
+                         /* colName */ null,
+                         /* expectedRoutingKey */ "yankeelover");
+        // Replicated table, specify routing suffix
+        verifyRoutingKey(/* replicated */ true,
+                         /* colName */ "yankeelover.integer",
+                         /* expectedRoutingKey */ "yankeelover.3");
+
+        // Unknown column, no routing suffix
+        verifyRoutingKey(/* replicated */ false,
+                         /* colName */ "yankeelover.doesntexist",
+                         /* expectedRoutingKey */ "yankeelover");
+    }
+
+    private void verifyRoutingKey(boolean replicated,
+                                  String colName,
+                                  String expectedRoutingKey)
+        throws Exception
     {
         final RabbitMQExportClient dut = new RabbitMQExportClient();
         final Properties config = new Properties();
         config.setProperty("broker.host", "localhost");
+        if (colName != null) {
+            config.setProperty("routing.key.suffix", colName);
+        }
         dut.configure(config);
 
-        ArrayList<String> colNames = Lists.newArrayList("col1", "col2");
-        ArrayList<VoltType> colTypes = Lists.newArrayList(VoltType.BIGINT, VoltType.FLOAT);
-        ArrayList<Integer> lens = Lists.newArrayList(8, 8);
+        final AdvertisedDataSource source = constructTestSource(replicated, 0);
         final RabbitMQExportClient.RabbitExportDecoder decoder =
-                (RabbitMQExportClient.RabbitExportDecoder) dut.constructExportDecoder(
-                        new AdvertisedDataSource(1, "TableSig", "TableName", "col1",
-                                System.currentTimeMillis(), 0, colNames, colTypes, lens));
-        assertEquals("TableName_1", decoder.m_effectiveRoutingKey);
+                (RabbitMQExportClient.RabbitExportDecoder) dut.constructExportDecoder(source);
+
+        long l = System.currentTimeMillis();
+        vtable.addRow(l, l, l, 0, l, l, (byte) 1,
+                /* partitioning column */ (short) 2,
+                3, 4, 5.5, 6, "xx", new BigDecimal(88));
+        vtable.advanceRow();
+        byte[] rowBytes = ExportEncoder.encodeRow(vtable);
+        final ExportDecoderBase.ExportRowData rowData = decoder.decodeRow(rowBytes);
+        assertEquals(expectedRoutingKey, decoder.getEffectiveRoutingKey(rowData));
     }
 }
