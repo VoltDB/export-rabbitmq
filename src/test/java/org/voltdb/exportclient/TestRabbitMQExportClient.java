@@ -122,6 +122,7 @@ public class TestRabbitMQExportClient {
         assertEquals(ConnectionFactory.DEFAULT_AMQP_PORT, dut.m_connFactory.getPort());
         assertEquals(ConnectionFactory.DEFAULT_USER, dut.m_connFactory.getUsername());
         assertEquals(ConnectionFactory.DEFAULT_PASS, dut.m_connFactory.getPassword());
+        assertEquals(ConnectionFactory.DEFAULT_VHOST, dut.m_connFactory.getVirtualHost());
         assertEquals("", dut.m_exchangeName);
         assertTrue(dut.m_routingKeyColumns.isEmpty());
         assertFalse(dut.m_skipInternal);

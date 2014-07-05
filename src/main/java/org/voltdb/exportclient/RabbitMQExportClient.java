@@ -82,6 +82,7 @@ public class RabbitMQExportClient extends ExportClientBase {
                 String.valueOf(ConnectionFactory.DEFAULT_AMQP_PORT)));
         final String username = config.getProperty("username", ConnectionFactory.DEFAULT_USER);
         final String password = config.getProperty("password", ConnectionFactory.DEFAULT_PASS);
+        final String vhost = config.getProperty("virtual.host", ConnectionFactory.DEFAULT_VHOST);
         m_exchangeName = config.getProperty("exchange.name", "");
 
         final String routingKeySuffix = config.getProperty("routing.key.suffix");
@@ -106,6 +107,7 @@ public class RabbitMQExportClient extends ExportClientBase {
         m_connFactory.setPort(brokerPort);
         m_connFactory.setUsername(username);
         m_connFactory.setPassword(password);
+        m_connFactory.setVirtualHost(vhost);
 
         final TimeZone tz = TimeZone.getTimeZone(config.getProperty("timezone", VoltDB.GMT_TIMEZONE.getID()));
 
