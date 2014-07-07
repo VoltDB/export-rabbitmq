@@ -74,8 +74,9 @@ public class RabbitMQExportClient extends ExportClientBase {
     @Override
     public void configure(Properties config) throws Exception {
         final String brokerHost = config.getProperty("broker.host");
-        if (brokerHost == null) {
-            throw new IllegalArgumentException("\"broker.host\" must not be null");
+        final String amqpUri = config.getProperty("amqp.uri");
+        if (brokerHost == null && amqpUri == null) {
+            throw new IllegalArgumentException("One of \"broker.host\" and \"amqp.uri\" must not be null");
         }
 
         final int brokerPort = Integer.parseInt(config.getProperty("broker.port",
@@ -103,6 +104,11 @@ public class RabbitMQExportClient extends ExportClientBase {
         }
 
         m_connFactory = new ConnectionFactory();
+        // Set the URI first, if other things are set, they'll overwrite the corresponding
+        // parts in the URI.
+        if (amqpUri != null) {
+            m_connFactory.setUri(amqpUri);
+        }
         m_connFactory.setHost(brokerHost);
         m_connFactory.setPort(brokerPort);
         m_connFactory.setUsername(username);

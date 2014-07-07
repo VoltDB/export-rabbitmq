@@ -101,11 +101,21 @@ public class TestRabbitMQExportClient {
         Properties emptyConfig = new Properties();
         try {
             dut.configure(emptyConfig);
-            fail("broker.host should be required");
+            fail("broker.host or amqp.uri should be required");
         } catch (Exception e) {
             assertTrue(e instanceof IllegalArgumentException);
             assertTrue(e.getMessage().contains("broker.host"));
         }
+
+        // Set host
+        Properties hostConfig = new Properties();
+        hostConfig.setProperty("broker.host", "fakehost");
+        dut.configure(hostConfig);
+
+        // Set URI
+        Properties uriConfig = new Properties();
+        uriConfig.setProperty("amqp.uri", "amqp://volt:adhoc@fakehost:7000/myvhost");
+        dut.configure(uriConfig);
     }
 
     /**
