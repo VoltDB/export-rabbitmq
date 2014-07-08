@@ -72,6 +72,7 @@
     <fileset dir='${voltdb.dir}'>
         <include name='voltdb-*.jar' />
     </fileset>
+    <pathelement path='/home/opt/rabbitmq/rabbitmq.jar'/>
     <pathelement path="${java.class.path}"/>
 </path>
 
