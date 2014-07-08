@@ -18,6 +18,7 @@
     <attribute name="destdir" default="${build.dir}"/>
     <attribute name="excludes" default=""/>
     <attribute name="includes" default=""/>
+    <attribute name="classpaths" default="project.classpath"/>
     <sequential>
         <javac
             target="1.7"
@@ -29,7 +30,7 @@
             encoding='UTF-8'
             debug='true'
             includeAntRuntime='false'>
-            <classpath refid="project.classpath" />
+            <classpath refid="@{classpaths}" />
         </javac>
     </sequential>
 </macrodef>
@@ -66,14 +67,18 @@
     <fileset dir='${dist.extension.dir}'>
         <include name='*.jar' />
     </fileset>
-    <fileset dir='${voltcore.thirdparty.dir}'>
-        <include name='*.jar' />
-    </fileset>
     <fileset dir='${voltdb.dir}'>
         <include name='voltdb-*.jar' />
     </fileset>
     <pathelement path='/home/opt/rabbitmq/rabbitmq.jar'/>
     <pathelement path="${java.class.path}"/>
+</path>
+
+<path id='project.test.classpath'>
+    <path refid='project.classpath'/>
+    <fileset dir='${voltcore.thirdparty.dir}'>
+        <include name='*.jar' />
+    </fileset>
 </path>
 
 <!-- common macro to run a bynch of junit -->
@@ -95,7 +100,7 @@
             maxmemory="1024M"
             showoutput="@{showoutput}"
         >
-            <classpath refid="project.classpath" />
+            <classpath refid="project.test.classpath" />
             <jvmarg value="-Xmx2048m"/>
             <jvmarg value="-XX:+HeapDumpOnOutOfMemoryError"/>
             <formatters/>
@@ -187,7 +192,8 @@ JAVA COMPILATION
     <invoke-javac17
         srcdir="${test.dir}"
         destdir="${build.test.dir}"
-        includes="org/voltdb/exportclient/Test*.java"/>
+        includes="org/voltdb/exportclient/Test*.java"
+        classpaths="project.test.classpath"/>
 </target>
 
 <!--
