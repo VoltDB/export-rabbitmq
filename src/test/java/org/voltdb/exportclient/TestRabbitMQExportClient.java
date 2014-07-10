@@ -84,7 +84,8 @@ public class TestRabbitMQExportClient {
         //clear the table
         vtable.clearRowData();
         AdvertisedDataSource source = new AdvertisedDataSource(partition, "foo", "yankeelover",
-                partCol, 0, 32, col_names, col_types, Arrays.asList(COLUMN_LENGTHS));
+                partCol, 0, 32, col_names, col_types, Arrays.asList(COLUMN_LENGTHS),
+                AdvertisedDataSource.ExportFormat.FOURDOTFOUR);
         return source;
     }
 
