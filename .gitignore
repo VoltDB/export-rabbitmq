@@ -28,3 +28,5 @@ catalog-report.html
 voltdbroot/
 log/
 tests/test_apps/*/*.jar
+bin/
+voltdb-rabbitmq.jar

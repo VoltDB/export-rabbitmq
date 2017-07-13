@@ -23,20 +23,32 @@
 
 package org.voltdb.exportclient;
 
-import com.rabbitmq.client.ConnectionFactory;
-import com.rabbitmq.client.MessageProperties;
-import org.junit.Before;
-import org.junit.Test;
-import org.voltdb.VoltDB;
-import org.voltdb.export.AdvertisedDataSource;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
+import static org.junit.Assert.fail;
 
 import java.math.BigDecimal;
 import java.util.Properties;
 import java.util.TimeZone;
 
-import static org.junit.Assert.*;
+import org.voltdb.VoltDB;
+import org.voltdb.export.AdvertisedDataSource;
+import org.voltdb.exportclient.ExportDecoderBase.RestartBlockException;
+import org.voltdb.types.GeographyPointValue;
+import org.voltdb.types.GeographyValue;
+
+import org.junit.Before;
+import org.junit.Test;
+
+import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.MessageProperties;
 
 public class TestRabbitMQExportClient extends ExportClientTestBase {
+    static final GeographyPointValue GEOG_POINT = GeographyPointValue.fromWKT("point(-122 37)");
+    static final GeographyValue GEOG = GeographyValue.fromWKT("polygon((0 0, 1 1, 0 1, 0 0))");
+
+    @Override
     @Before
     public void setup()
     {
@@ -134,8 +146,7 @@ public class TestRabbitMQExportClient extends ExportClientTestBase {
     private void verifyRoutingKey(boolean replicated,
                                   String colName,
                                   String expectedRoutingKey)
-        throws Exception
-    {
+        throws Exception {
         final RabbitMQExportClient dut = new RabbitMQExportClient();
         final Properties config = new Properties();
         config.setProperty("broker.host", "localhost");
@@ -149,12 +160,25 @@ public class TestRabbitMQExportClient extends ExportClientTestBase {
                 (RabbitMQExportClient.RabbitExportDecoder) dut.constructExportDecoder(source);
 
         long l = System.currentTimeMillis();
+        int partitionColumn;
+        if (replicated) {
+            partitionColumn = 3;
+        }
+        else {
+            partitionColumn = 7;
+        }
+
         vtable.addRow(l, l, l, 0, l, l, (byte) 1,
                 /* partitioning column */ (short) 2,
-                3, 4, 5.5, 6, "xx", new BigDecimal(88));
+                3, 4, 5.5, 6, "xx", new BigDecimal(88), GEOG_POINT, GEOG);
         vtable.advanceRow();
-        byte[] rowBytes = ExportEncoder.encodeRow(vtable);
-        final ExportDecoderBase.ExportRowData rowData = decoder.decodeRow(rowBytes);
+        byte[] rowBytes = ExportEncoder.encodeRow(vtable, "yankeelover", partitionColumn, 0L);
+        final ExportRowData rowData = ExportRowData.decodeRow(partitionColumn, l, rowBytes);
+        decoder.onBlockStart(rowData);
+        try {
+            decoder.onBlockCompletion(rowData);
+        }
+        catch (RestartBlockException ignore) {}
         assertEquals(expectedRoutingKey, decoder.getEffectiveRoutingKey(rowData));
     }
 }
