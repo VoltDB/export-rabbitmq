@@ -144,7 +144,7 @@ public class RabbitMQExportClient extends ExportClientBase {
         // Cached RabbitMQ channel
         private Channel m_channel;
         boolean m_primed = false;
-        // partition column name other than table's partition column
+        // partition column name specified by user
         private String m_usfPartitionColumn = null;
 
         private final ListeningExecutorService m_es;
@@ -224,10 +224,12 @@ public class RabbitMQExportClient extends ExportClientBase {
                     return row.tableName;
                 }
             }
+
             if (row.partitionValue != null) {
                 return row.tableName + "." + row.partitionValue.toString();
             }
-              return row.tableName;
+
+            return row.tableName;
         }
 
         @Override

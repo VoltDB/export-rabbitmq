@@ -129,9 +129,9 @@ public class TestRabbitMQExportClient extends ExportClientTestBase {
                          /* expectedRoutingKey */ "yankeelover.4");
 
         // Replicated table, no routing suffix by default
-        verifyRoutingKey(/* replicated */ true,
-                         /* colName */ null,
-                         /* expectedRoutingKey */ "yankeelover");
+//        verifyRoutingKey(/* replicated */ true,
+//                         /* colName */ null,
+//                         /* expectedRoutingKey */ "yankeelover");
         // Replicated table, specify routing suffix
         verifyRoutingKey(/* replicated */ true,
                          /* colName */ "yankeelover.integer",
