@@ -33,24 +33,26 @@ import java.util.StringTokenizer;
 import java.util.TimeZone;
 import java.util.concurrent.TimeUnit;
 
+import com.google_voltpatches.common.base.Throwables;
+import com.google_voltpatches.common.util.concurrent.ListeningExecutorService;
 import org.voltcore.logging.Level;
 import org.voltcore.logging.VoltLogger;
 import org.voltcore.utils.CoreUtils;
 import org.voltcore.utils.RateLimitedLogger;
 
-import org.voltdb.VoltDB;
-import org.voltdb.common.Constants;
-import org.voltdb.export.AdvertisedDataSource;
-
-import com.google_voltpatches.common.base.Throwables;
-import com.google_voltpatches.common.util.concurrent.ListeningExecutorService;
-import com.rabbitmq.client.AMQP.BasicProperties;
-import com.rabbitmq.client.Channel;
-import com.rabbitmq.client.Connection;
 import com.rabbitmq.client.ConnectionFactory;
+import com.rabbitmq.client.Connection;
+import com.rabbitmq.client.Channel;
 import com.rabbitmq.client.MessageProperties;
+import com.rabbitmq.client.AMQP.BasicProperties;
 
 import au.com.bytecode.opencsv_voltpatches.CSVWriter;
+import org.voltdb.VoltDB;
+import org.voltdb.VoltType;
+import org.voltdb.common.Constants;
+import org.voltdb.export.AdvertisedDataSource;
+import org.voltdb.types.TimestampType;
+import org.voltdb.utils.Encoder;
 
 public class RabbitMQExportClient extends ExportClientBase {
 
@@ -135,6 +137,12 @@ public class RabbitMQExportClient extends ExportClientBase {
 
     @Override
     public ExportDecoderBase constructExportDecoder(AdvertisedDataSource source) {
+        // Get the routing key column name for this table
+        String partCol = m_routingKeyColumns.get(source.tableName.toLowerCase());
+        if (partCol != null) {
+            //This is for setting column other than partition column of table.
+            source.setPartitionColumnName(partCol);
+        }
         return new RabbitExportDecoder(source);
     }
 
@@ -143,17 +151,17 @@ public class RabbitMQExportClient extends ExportClientBase {
         private Connection m_connection;
         // Cached RabbitMQ channel
         private Channel m_channel;
-        boolean m_primed = false;
-        // partition column name specified by user
-        private String m_usfPartitionColumn = null;
-
+        private final AdvertisedDataSource m_source;
         private final ListeningExecutorService m_es;
 
         RabbitExportDecoder(AdvertisedDataSource source) {
             super(source);
             slogger.info("Creating Rabbit export decoder for " + source.toString());
-
-            m_es = CoreUtils.getListeningSingleThreadExecutor("RabbitMQ Export decoder", CoreUtils.SMALL_STACK_SIZE);
+            m_source = source;
+            m_es = CoreUtils.getListeningSingleThreadExecutor(
+                    "RabbitMQ Export decoder for partition " + source.partitionId
+                    + " table " + source.tableName
+                    + " generation " + source.m_generation, CoreUtils.SMALL_STACK_SIZE);
         }
 
         private Connection getConnection() throws IOException {
@@ -213,46 +221,62 @@ public class RabbitMQExportClient extends ExportClientBase {
             }
         }
 
-        String getEffectiveRoutingKey(ExportRowData row) {
-            if (m_usfPartitionColumn != null) {
-                int partitionColumnIndex;
-                if ((partitionColumnIndex = row.names.indexOf(m_usfPartitionColumn)) != -1) {
-                    assert row.values.length > partitionColumnIndex : "Computed parition column index incorrect";
-                    return row.tableName + "." + row.values[partitionColumnIndex].toString();
-                }
-                else {
-                    return row.tableName;
-                }
+        String getEffectiveRoutingKey(ExportRowData row)
+        {
+            final String effectiveRoutingKey;
+            if (row.partitionValue == null) {
+                effectiveRoutingKey = m_source.tableName;
+            } else {
+                effectiveRoutingKey = m_source.tableName + "." + row.partitionValue.toString();
             }
+            return effectiveRoutingKey;
+        }
 
-            if (row.partitionValue != null) {
-                return row.tableName + "." + row.partitionValue.toString();
+        //Based on your skipinternal value return index of first field.
+        public int getFirstField(boolean skipinternal) {
+            return skipinternal ? INTERNAL_FIELD_COUNT : 0;
+        }
+
+        public boolean writeRow(Object row[], CSVWriter writer, boolean skipinternal,
+                BinaryEncoding binaryEncoding, SimpleDateFormat dateFormatter) {
+
+            int firstfield = getFirstField(skipinternal);
+            try {
+                String[] fields = new String[m_source.columnTypes.size() - firstfield];
+                for (int i = firstfield; i < m_source.columnTypes.size(); i++) {
+                    if (row[i] == null) {
+                        fields[i - firstfield] = "NULL";
+                    } else if (m_source.columnTypes.get(i) == VoltType.VARBINARY && binaryEncoding != null) {
+                        if (binaryEncoding == BinaryEncoding.HEX) {
+                            fields[i - firstfield] = Encoder.hexEncode((byte[]) row[i]);
+                        } else {
+                            fields[i - firstfield] = Encoder.base64Encode((byte[]) row[i]);
+                        }
+                    } else if (m_source.columnTypes.get(i) == VoltType.STRING) {
+                        fields[i - firstfield] = (String) row[i];
+                    } else if (m_source.columnTypes.get(i) == VoltType.TIMESTAMP && dateFormatter != null) {
+                        TimestampType timestamp = (TimestampType) row[i];
+                        fields[i - firstfield] = dateFormatter.format(timestamp.asApproximateJavaDate());
+                    } else {
+                        fields[i - firstfield] = row[i].toString();
+                    }
+                }
+                writer.writeNext(fields);
+            } catch (Exception x) {
+                x.printStackTrace();
+                return false;
             }
-
-            return row.tableName;
+            return true;
         }
 
         @Override
-        public void onBlockStart(ExportRowData row) throws RestartBlockException {
-            if (!m_primed) {
-                m_usfPartitionColumn = m_routingKeyColumns.get(row.tableName.toLowerCase());
-                System.out.println("Partition column name: " + m_usfPartitionColumn);
-
-                String threadName = "RabbitMQ Export decoder for partition " + row.partitionId
-                        + " table " + row.tableName + " generation " + row.generation;
-                Thread.currentThread().setName(threadName);
-                m_primed = true;
-            }
-        }
-
-        @Override
-        public boolean processRow(ExportRowData row)
+        public boolean processRow(int rowSize, byte[] rowData)
                 throws RestartBlockException {
             StringWriter stringer = new StringWriter();
             CSVWriter csv = new CSVWriter(stringer);
             try {
-                if (!ExportRowData.writeRow(row.values, csv, m_skipInternal,
-                        m_binaryEncoding, m_ODBCDateformat.get(), row.types)) {
+                final ExportRowData row = decodeRow(rowData);
+                if (!writeRow(row.values, csv, m_skipInternal, m_binaryEncoding, m_ODBCDateformat.get())) {
                     return false;
                 }
                 csv.flush();
@@ -279,7 +303,7 @@ public class RabbitMQExportClient extends ExportClientBase {
         }
 
         @Override
-        public void onBlockCompletion(ExportRowData row) throws RestartBlockException {
+        public void onBlockCompletion() throws RestartBlockException {
             try {
                 getChannel().waitForConfirmsOrDie();
             } catch (Exception e) {
