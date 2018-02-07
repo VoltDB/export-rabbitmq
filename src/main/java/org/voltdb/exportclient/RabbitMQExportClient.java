@@ -48,8 +48,11 @@ import com.rabbitmq.client.AMQP.BasicProperties;
 
 import au.com.bytecode.opencsv_voltpatches.CSVWriter;
 import org.voltdb.VoltDB;
+import org.voltdb.VoltType;
 import org.voltdb.common.Constants;
 import org.voltdb.export.AdvertisedDataSource;
+import org.voltdb.types.TimestampType;
+import org.voltdb.utils.Encoder;
 
 public class RabbitMQExportClient extends ExportClientBase {
 
@@ -148,13 +151,13 @@ public class RabbitMQExportClient extends ExportClientBase {
         private Connection m_connection;
         // Cached RabbitMQ channel
         private Channel m_channel;
-
+        private final AdvertisedDataSource m_source;
         private final ListeningExecutorService m_es;
 
         RabbitExportDecoder(AdvertisedDataSource source) {
             super(source);
             slogger.info("Creating Rabbit export decoder for " + source.toString());
-
+            m_source = source;
             m_es = CoreUtils.getListeningSingleThreadExecutor(
                     "RabbitMQ Export decoder for partition " + source.partitionId
                     + " table " + source.tableName
@@ -227,6 +230,43 @@ public class RabbitMQExportClient extends ExportClientBase {
                 effectiveRoutingKey = m_source.tableName + "." + row.partitionValue.toString();
             }
             return effectiveRoutingKey;
+        }
+
+        //Based on your skipinternal value return index of first field.
+        public int getFirstField(boolean skipinternal) {
+            return skipinternal ? INTERNAL_FIELD_COUNT : 0;
+        }
+
+        public boolean writeRow(Object row[], CSVWriter writer, boolean skipinternal,
+                BinaryEncoding binaryEncoding, SimpleDateFormat dateFormatter) {
+
+            int firstfield = getFirstField(skipinternal);
+            try {
+                String[] fields = new String[m_source.columnTypes.size() - firstfield];
+                for (int i = firstfield; i < m_source.columnTypes.size(); i++) {
+                    if (row[i] == null) {
+                        fields[i - firstfield] = "NULL";
+                    } else if (m_source.columnTypes.get(i) == VoltType.VARBINARY && binaryEncoding != null) {
+                        if (binaryEncoding == BinaryEncoding.HEX) {
+                            fields[i - firstfield] = Encoder.hexEncode((byte[]) row[i]);
+                        } else {
+                            fields[i - firstfield] = Encoder.base64Encode((byte[]) row[i]);
+                        }
+                    } else if (m_source.columnTypes.get(i) == VoltType.STRING) {
+                        fields[i - firstfield] = (String) row[i];
+                    } else if (m_source.columnTypes.get(i) == VoltType.TIMESTAMP && dateFormatter != null) {
+                        TimestampType timestamp = (TimestampType) row[i];
+                        fields[i - firstfield] = dateFormatter.format(timestamp.asApproximateJavaDate());
+                    } else {
+                        fields[i - firstfield] = row[i].toString();
+                    }
+                }
+                writer.writeNext(fields);
+            } catch (Exception x) {
+                x.printStackTrace();
+                return false;
+            }
+            return true;
         }
 
         @Override
